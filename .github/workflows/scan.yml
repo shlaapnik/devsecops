@@ -1,0 +1,664 @@
+name: DevSecOps scan
+
+on:
+  workflow_call:
+    inputs:
+      path:
+        description: Directory to scan, relative to the repository root.
+        type: string
+        default: .
+      enforce:
+        description: Fail on blocking findings. Set to false for a report-only run on an old project.
+        type: boolean
+        default: true
+      skip:
+        description: "Comma-separated checks to skip: secrets, ci, sast, deps, dockerfiles, image."
+        type: string
+        default: ""
+      fail-on-severity:
+        description: Lowest severity of a fixable vulnerability that blocks (low, medium, high, critical).
+        type: string
+        default: high
+      secrets-confidence:
+        description: Lowest Betterleaks confidence that is reported (low, medium, high).
+        type: string
+        default: medium
+      semgrep-config:
+        description: Space-separated Semgrep rulesets. A .semgrep directory in the project is added automatically.
+        type: string
+        default: p/default
+      semgrep-args:
+        description: Extra Semgrep arguments, for example "--exclude-rule <rule-id>".
+        type: string
+        default: ""
+      dockerfile:
+        description: Dockerfile of the image check, relative to path.
+        type: string
+        default: Dockerfile
+      docker-context:
+        description: Build context of the image check, relative to path.
+        type: string
+        default: .
+      upload-sarif:
+        description: Upload SARIF to code scanning. Private repositories are skipped because they need GitHub Code Security.
+        type: boolean
+        default: true
+      report-name:
+        description: Prefix of artifact names and SARIF categories. Change it when one run calls this workflow twice.
+        type: string
+        default: devsecops
+    outputs:
+      secrets:
+        description: Blocking findings from Betterleaks.
+        value: ${{ jobs.secrets.outputs.findings }}
+      ci:
+        description: Blocking findings from zizmor and actionlint.
+        value: ${{ jobs.ci.outputs.findings }}
+      sast:
+        description: Blocking findings from Semgrep.
+        value: ${{ jobs.sast.outputs.findings }}
+      deps:
+        description: Blocking findings from Grype on the source tree.
+        value: ${{ jobs.deps.outputs.findings }}
+      dockerfiles:
+        description: Blocking findings from hadolint.
+        value: ${{ jobs.dockerfiles.outputs.findings }}
+      image:
+        description: Blocking findings from Grype on the built image.
+        value: ${{ jobs.image.outputs.findings }}
+
+permissions: {}
+
+# Scanner images. Renovate updates tags and digests here, the canary self-test guards the update.
+env:
+  ACTIONLINT_IMAGE: rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+  BETTERLEAKS_IMAGE: ghcr.io/betterleaks/betterleaks:v1.10.0@sha256:c6dfa75145fe5b31fdaf02feff18a73f1e11df8ca04876522f87f857656c83ca
+  GRYPE_IMAGE: anchore/grype:v0.121.3@sha256:13113eeceab017260370cf540e1d25442c59665fd07d1b09b66d63bb0c282887
+  HADOLINT_IMAGE: hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
+  SEMGREP_IMAGE: semgrep/semgrep:1.185.0@sha256:67518c174185a2043fdbed16c70631b79209499b3671178e7194379b48295a0d
+  ZIZMOR_IMAGE: ghcr.io/zizmorcore/zizmor:1.32.0@sha256:3014cc8f68f663935f69b3c3e0e41f5ce102b268d97db13db0f62208747f860d
+  SCAN_PATH: ${{ inputs.path }}
+
+jobs:
+  secrets:
+    name: Secrets
+    if: ${{ !contains(inputs.skip, 'secrets') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    outputs:
+      findings: ${{ steps.scan.outputs.findings }}
+    steps:
+      - name: Check out source with history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan for secrets with Betterleaks
+        id: scan
+        env:
+          CONFIDENCE: ${{ inputs.secrets-confidence }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/devsecops"
+          mkdir -p "$out" "$RUNNER_TEMP/home/tmp"
+          cd "$SCAN_PATH"
+          # Inline gitleaks:allow comments are ignored: exceptions live in reviewed files, not next to the code.
+          args=(--no-banner --no-color --redact --exit-code 3 --confidence "$CONFIDENCE" --ignore-gitleaks-allow
+            --max-target-megabytes 10 --report-format sarif --report-path /out/betterleaks.sarif)
+          for config in .betterleaks.toml .gitleaks.toml; do
+            if [[ -f "$config" ]]; then
+              args+=(--config "$config")
+              break
+            fi
+          done
+          if [[ -f .devsecops/betterleaks-baseline.json ]]; then
+            args+=(--baseline-path .devsecops/betterleaks-baseline.json)
+          fi
+          # The whole git history at the repository root, the working tree in a subdirectory.
+          mode=dir
+          if [[ "$SCAN_PATH" == "." ]]; then
+            mode=git
+          fi
+          status=0
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --env HOME=/scan-home --env TMPDIR=/scan-home/tmp --volume "$RUNNER_TEMP/home:/scan-home" \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --volume "$out:/out" --workdir "/src/$SCAN_PATH" \
+            "$BETTERLEAKS_IMAGE" "$mode" "${args[@]}" . || status=$?
+          case "$status" in
+            0) findings=0 ;;
+            3) findings=$(jq '[.runs[].results[]] | length' "$out/betterleaks.sarif") ;;
+            *) echo "::error title=Secrets::Betterleaks exited with code $status"; exit "$status" ;;
+          esac
+          echo "findings=$findings" >> "$GITHUB_OUTPUT"
+          echo "report=true" >> "$GITHUB_OUTPUT"
+
+      - name: Flag changed exceptions and settings
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          # An agent that wants a green check edits these first, so a human should look.
+          range="origin/$BASE_REF...HEAD"
+          caller="${GITHUB_WORKFLOW_REF%%@*}"
+          caller="${caller#"$GITHUB_REPOSITORY/"}"
+          diff=$({
+            git -C "$SCAN_PATH" diff --name-only "$range" -- \
+              .betterleaksignore .gitleaksignore .betterleaks.toml .gitleaks.toml .semgrepignore .semgrep \
+              .grype.yaml .grype.yml .grype .hadolint.yaml .hadolint.yml zizmor.yml .github/zizmor.yml \
+              .github/actionlint.yaml .github/actionlint.yml .devsecops
+            # The calling workflow can turn checks off.
+            git diff --name-only -G 'enforce|skip|fail-on-severity|secrets-confidence|semgrep-config|semgrep-args' \
+              "$range" -- "$caller"
+            # zizmor reads inline ignore comments in workflows and actions.
+            git diff --name-only -G 'zizmor: *ignore' "$range" -- .github
+          } | sort -u)
+          mapfile -t changed <<< "$diff"
+          if [[ -n "$diff" ]]; then
+            echo "::warning title=Exceptions changed::Review these before merging: ${changed[*]}"
+            {
+              echo "### Exceptions or pipeline settings changed in this pull request"
+              echo
+              printf -- '- %s\n' "${changed[@]}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.report-name }}-secrets
+          path: ${{ runner.temp }}/devsecops
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload SARIF to code scanning
+        if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/devsecops/betterleaks.sarif
+          category: ${{ inputs.report-name }}-secrets
+
+      - name: Fail on secrets
+        if: ${{ inputs.enforce && steps.scan.outputs.findings != '0' }}
+        env:
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+        run: |
+          echo "::error title=Secrets::Betterleaks found $FINDINGS secret(s). Rotate them, then ignore the fingerprint in .betterleaksignore."
+          exit 1
+
+  ci:
+    name: CI config
+    if: ${{ !contains(inputs.skip, 'ci') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    outputs:
+      findings: ${{ steps.scan.outputs.findings }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Audit workflows with zizmor and actionlint
+        id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/devsecops"
+          mkdir -p "$out" "$RUNNER_TEMP/home/tmp"
+          cd "$SCAN_PATH"
+          if [[ ! -d .github/workflows ]]; then
+            echo "No .github/workflows here, nothing to audit"
+            echo "findings=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          prefix=""
+          if [[ "$SCAN_PATH" != "." ]]; then
+            prefix="$SCAN_PATH/"
+          fi
+          run() {
+            docker run --rm --user "$(id -u):$(id -g)" \
+              --env HOME=/scan-home --env TMPDIR=/scan-home/tmp --volume "$RUNNER_TEMP/home:/scan-home" \
+              --volume "$GITHUB_WORKSPACE:/src:ro" --volume "$out:/out" --workdir "/src/$SCAN_PATH" "$@"
+          }
+
+          # Explicit inputs: a directory input would also pick up nested fixtures and templates.
+          mapfile -t files < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
+          inputs=("${files[@]}")
+          for file in .pre-commit-config.yaml action.yml action.yaml; do
+            if [[ -f "$file" ]]; then
+              inputs+=("$file")
+            fi
+          done
+          if [[ -d .github/actions ]]; then
+            mapfile -t -O "${#inputs[@]}" inputs < <(find .github/actions -type f \( -name action.yml -o -name action.yaml \) | sort)
+          fi
+
+          # Own reusable workflows may follow a branch, everything else must be pinned to a commit.
+          zizmor_args=(--min-severity medium --no-progress)
+          if [[ -f .github/zizmor.yml ]]; then
+            zizmor_args+=(--config .github/zizmor.yml)
+          elif [[ -f zizmor.yml ]]; then
+            zizmor_args+=(--config zizmor.yml)
+          else
+            printf 'rules:\n  unpinned-uses:\n    config:\n      policies:\n        "%s/*": ref-pin\n        "*": hash-pin\n' \
+              "$OWNER" > "$out/zizmor.yml"
+            zizmor_args+=(--config /out/zizmor.yml)
+          fi
+          # Online audits (impostor commits, known-vulnerable actions) need the token.
+          token_env=()
+          if [[ -n "${GH_TOKEN:-}" ]]; then
+            token_env=(--env GH_TOKEN)
+          else
+            zizmor_args+=(--offline)
+          fi
+          status=0
+          run "${token_env[@]}" "$ZIZMOR_IMAGE" "${zizmor_args[@]}" --no-exit-codes --format sarif "${inputs[@]}" \
+            > "$out/zizmor.sarif" || status=$?
+          if (( status != 0 )); then
+            echo "::error title=CI config::zizmor exited with code $status"
+            exit "$status"
+          fi
+          # Annotations from SARIF, because zizmor's own annotations lack the path prefix in a subdirectory.
+          jq -r --arg prefix "$prefix" '.runs[].results[] | .locations[0].physicalLocation as $at |
+            "::\(if .level == "error" then "error" elif .level == "warning" then "warning" else "notice" end) file=\($prefix)\($at.artifactLocation.uri),line=\($at.region.startLine),title=\(.ruleId)::\(.message.text)"
+          ' "$out/zizmor.sarif"
+          zizmor_findings=$(jq '[.runs[].results[]] | length' "$out/zizmor.sarif")
+
+          # New runner labels reach actionlint late, so unknown labels are not reported.
+          status=0
+          run "$ACTIONLINT_IMAGE" -format '{{json .}}' -ignore 'label ".+" is unknown' "${files[@]}" \
+            > "$out/actionlint.json" || status=$?
+          if (( status > 1 )); then
+            echo "::error title=CI config::actionlint exited with code $status"
+            exit "$status"
+          fi
+          jq -r --arg prefix "$prefix" \
+            '.[] | "::error file=\($prefix)\(.filepath),line=\(.line),col=\(.column),title=actionlint \(.kind)::\(.message)"' \
+            "$out/actionlint.json"
+          actionlint_findings=$(jq length "$out/actionlint.json")
+
+          echo "zizmor: $zizmor_findings, actionlint: $actionlint_findings"
+          echo "findings=$((zizmor_findings + actionlint_findings))" >> "$GITHUB_OUTPUT"
+          echo "report=true" >> "$GITHUB_OUTPUT"
+
+      - name: Keep reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.report-name }}-ci
+          path: ${{ runner.temp }}/devsecops
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload SARIF to code scanning
+        if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/devsecops/zizmor.sarif
+          category: ${{ inputs.report-name }}-zizmor
+
+      - name: Fail on CI config findings
+        if: ${{ inputs.enforce && steps.scan.outputs.findings != '0' }}
+        env:
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+        run: |
+          echo "::error title=CI config::$FINDINGS CI config finding(s), see the annotations above"
+          exit 1
+
+  sast:
+    name: SAST
+    if: ${{ !contains(inputs.skip, 'sast') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    outputs:
+      findings: ${{ steps.scan.outputs.findings }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scan code with Semgrep
+        id: scan
+        env:
+          SEMGREP_CONFIG: ${{ inputs.semgrep-config }}
+          SEMGREP_ARGS: ${{ inputs.semgrep-args }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/devsecops"
+          mkdir -p "$out" "$RUNNER_TEMP/home/tmp"
+          cd "$SCAN_PATH"
+          # Inline nosemgrep comments are ignored: exceptions live in reviewed files, not next to the code.
+          args=(scan --metrics=off --disable-nosem --sarif-output=/out/semgrep.sarif)
+          read -r -a configs <<< "$SEMGREP_CONFIG"
+          for config in "${configs[@]}"; do
+            args+=(--config "$config")
+          done
+          if [[ -d .semgrep ]]; then
+            args+=(--config .semgrep)
+          fi
+          read -r -a extra <<< "$SEMGREP_ARGS"
+          status=0
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --env HOME=/scan-home --env TMPDIR=/scan-home/tmp --volume "$RUNNER_TEMP/home:/scan-home" \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --volume "$out:/out" --workdir "/src/$SCAN_PATH" \
+            "$SEMGREP_IMAGE" semgrep "${args[@]}" "${extra[@]}" . || status=$?
+          if (( status != 0 )); then
+            echo "::error title=SAST::Semgrep exited with code $status"
+            exit "$status"
+          fi
+          # SARIF keeps the severity on the rule, so ERROR-level rules are the blocking ones.
+          findings=$(jq '
+            (.runs[0].tool.driver.rules | map({(.id): (.defaultConfiguration.level // "warning")}) | add // {}) as $level
+            | [.runs[0].results[] | select((.level // $level[.ruleId]) == "error")] | length
+          ' "$out/semgrep.sarif")
+          echo "findings=$findings" >> "$GITHUB_OUTPUT"
+          echo "report=true" >> "$GITHUB_OUTPUT"
+
+      - name: Keep reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.report-name }}-sast
+          path: ${{ runner.temp }}/devsecops
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload SARIF to code scanning
+        if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/devsecops/semgrep.sarif
+          category: ${{ inputs.report-name }}-semgrep
+
+      - name: Fail on SAST findings
+        if: ${{ inputs.enforce && steps.scan.outputs.findings != '0' }}
+        env:
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+        run: |
+          echo "::error title=SAST::Semgrep found $FINDINGS ERROR-level issue(s), see the scan step log"
+          exit 1
+
+  deps:
+    name: Dependencies
+    if: ${{ !contains(inputs.skip, 'deps') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    outputs:
+      findings: ${{ steps.scan.outputs.findings }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scan dependencies with Grype
+        id: scan
+        env:
+          SEVERITY: ${{ inputs.fail-on-severity }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/devsecops"
+          mkdir -p "$out" "$RUNNER_TEMP/home/tmp"
+          # Only vulnerabilities with a fix: anything else cannot be solved by an update.
+          # Grype reads .grype.yaml from the scanned directory for reviewed ignores and excluded paths.
+          status=0
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --env HOME=/scan-home --env TMPDIR=/scan-home/tmp --volume "$RUNNER_TEMP/home:/scan-home" \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --volume "$out:/out" --workdir "/src/$SCAN_PATH" \
+            "$GRYPE_IMAGE" dir:. --only-fixed --fail-on "$SEVERITY" --output table \
+            --output json=/out/grype-source.json --output sarif=/out/grype-source.sarif \
+            --output cyclonedx-json=/out/sbom-source.cdx.json || status=$?
+          if (( status != 0 && status != 2 )); then
+            echo "::error title=Dependencies::Grype exited with code $status"
+            exit "$status"
+          fi
+          findings=$(jq --arg threshold "$SEVERITY" '
+            def rank: {"negligible": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}[ascii_downcase] // 0;
+            [.matches[] | select((.vulnerability.severity | rank) >= ($threshold | rank))] | length
+          ' "$out/grype-source.json")
+          echo "findings=$findings" >> "$GITHUB_OUTPUT"
+          echo "report=true" >> "$GITHUB_OUTPUT"
+
+      - name: Keep reports and the SBOM
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.report-name }}-deps
+          path: ${{ runner.temp }}/devsecops
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload SARIF to code scanning
+        if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/devsecops/grype-source.sarif
+          category: ${{ inputs.report-name }}-deps
+
+      - name: Fail on vulnerable dependencies
+        if: ${{ inputs.enforce && steps.scan.outputs.findings != '0' }}
+        env:
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+          SEVERITY: ${{ inputs.fail-on-severity }}
+        run: |
+          echo "::error title=Dependencies::$FINDINGS fixable vulnerabilit(ies) at $SEVERITY or above. Update them or merge the Renovate PR."
+          exit 1
+
+  dockerfiles:
+    name: Dockerfiles
+    if: ${{ !contains(inputs.skip, 'dockerfiles') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    outputs:
+      findings: ${{ steps.scan.outputs.findings }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Lint Dockerfiles with hadolint
+        id: scan
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/devsecops"
+          mkdir -p "$out" "$RUNNER_TEMP/home/tmp"
+          cd "$SCAN_PATH"
+          mapfile -t files < <(find . -type f \
+            \( -name Dockerfile -o -name 'Dockerfile.*' -o -name '*.Dockerfile' -o -name '*.dockerfile' -o -name Containerfile \) \
+            -not -path './.git/*' -not -path '*/node_modules/*' | sort)
+          if (( ${#files[@]} == 0 )); then
+            echo "No Dockerfiles here"
+            echo "findings=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          prefix=""
+          if [[ "$SCAN_PATH" != "." ]]; then
+            prefix="$SCAN_PATH/"
+          fi
+          run() {
+            docker run --rm --user "$(id -u):$(id -g)" \
+              --env HOME=/scan-home --env TMPDIR=/scan-home/tmp --volume "$RUNNER_TEMP/home:/scan-home" \
+              --volume "$GITHUB_WORKSPACE:/src:ro" --workdir "/src/$SCAN_PATH" "$HADOLINT_IMAGE" \
+              hadolint --no-fail --disable-ignore-pragma "$@"
+          }
+          # hadolint reads .hadolint.yaml from the scanned directory. Inline ignore comments are ignored.
+          run --format json "${files[@]}" > "$out/hadolint.json"
+          run --format sarif "${files[@]}" > "$out/hadolint.sarif"
+          jq -r --arg prefix "$prefix" '.[] |
+            "::\(if .level == "error" then "error" elif .level == "warning" then "warning" else "notice" end) file=\($prefix)\(.file | ltrimstr("./")),line=\(.line),title=hadolint \(.code)::\(.message)"
+          ' "$out/hadolint.json"
+          findings=$(jq '[.[] | select(.level == "error")] | length' "$out/hadolint.json")
+          echo "findings=$findings" >> "$GITHUB_OUTPUT"
+          echo "report=true" >> "$GITHUB_OUTPUT"
+
+      - name: Keep reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.report-name }}-dockerfiles
+          path: ${{ runner.temp }}/devsecops
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload SARIF to code scanning
+        if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/devsecops/hadolint.sarif
+          category: ${{ inputs.report-name }}-hadolint
+
+      - name: Fail on Dockerfile errors
+        if: ${{ inputs.enforce && steps.scan.outputs.findings != '0' }}
+        env:
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+        run: |
+          echo "::error title=Dockerfiles::hadolint found $FINDINGS error(s), see the annotations above"
+          exit 1
+
+  image:
+    name: Image
+    if: ${{ !contains(inputs.skip, 'image') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    outputs:
+      findings: ${{ steps.scan.outputs.findings }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the image and scan it with Grype
+        id: scan
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          BUILD_CONTEXT: ${{ inputs.docker-context }}
+          SEVERITY: ${{ inputs.fail-on-severity }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/devsecops"
+          image_dir="$RUNNER_TEMP/image"
+          mkdir -p "$out" "$image_dir" "$RUNNER_TEMP/home/tmp"
+          cd "$SCAN_PATH"
+          if [[ ! -f "$DOCKERFILE" ]]; then
+            echo "No $DOCKERFILE here, nothing to build"
+            echo "findings=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          docker build --pull --file "$DOCKERFILE" --tag devsecops/scan:local "$BUILD_CONTEXT"
+          docker save devsecops/scan:local --output "$image_dir/image.tar"
+          run() {
+            docker run --rm --user "$(id -u):$(id -g)" \
+              --env HOME=/scan-home --env TMPDIR=/scan-home/tmp --volume "$RUNNER_TEMP/home:/scan-home" \
+              --volume "$GITHUB_WORKSPACE:/src:ro" --volume "$image_dir:/image:ro" --volume "$out:/out" \
+              --workdir "/src/$SCAN_PATH" "$@"
+          }
+          status=0
+          run "$GRYPE_IMAGE" docker-archive:/image/image.tar --only-fixed --fail-on "$SEVERITY" --output table \
+            --output json=/out/grype-image.json --output sarif=/out/grype-image.sarif \
+            --output cyclonedx-json=/out/sbom-image.cdx.json || status=$?
+          if (( status != 0 && status != 2 )); then
+            echo "::error title=Image::Grype exited with code $status"
+            exit "$status"
+          fi
+          findings=$(jq --arg threshold "$SEVERITY" '
+            def rank: {"negligible": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}[ascii_downcase] // 0;
+            [.matches[] | select((.vulnerability.severity | rank) >= ($threshold | rank))] | length
+          ' "$out/grype-image.json")
+          echo "findings=$findings" >> "$GITHUB_OUTPUT"
+          echo "report=true" >> "$GITHUB_OUTPUT"
+
+      - name: Keep reports and the SBOM
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.report-name }}-image
+          path: ${{ runner.temp }}/devsecops
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload SARIF to code scanning
+        if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/devsecops/grype-image.sarif
+          category: ${{ inputs.report-name }}-image
+
+      - name: Fail on vulnerable image
+        if: ${{ inputs.enforce && steps.scan.outputs.findings != '0' }}
+        env:
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+          SEVERITY: ${{ inputs.fail-on-severity }}
+        run: |
+          echo "::error title=Image::$FINDINGS fixable vulnerabilit(ies) at $SEVERITY or above in the image. Update the base image or packages."
+          exit 1
+
+  gate:
+    name: Gate
+    if: ${{ always() }}
+    needs: [secrets, ci, sast, deps, dockerfiles, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Summarize and decide
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          ENFORCE: ${{ inputs.enforce }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## DevSecOps"
+            echo
+            if [[ "$ENFORCE" != "true" ]]; then
+              echo "> Report-only mode: findings do not fail the run."
+              echo
+            fi
+            echo "| Check | Result | Blocking findings |"
+            echo "|---|---|---|"
+            jq -r 'to_entries[] | "| \(.key) | \(.value.result) | \(.value.outputs.findings // "–") |"' <<< "$NEEDS"
+            echo
+            echo "Reports and SBOMs are in the run artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"
+          failed=$(jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key] | join(", ")' <<< "$NEEDS")
+          if [[ -n "$failed" ]]; then
+            echo "::error title=DevSecOps::Failed checks: $failed"
+            exit 1
+          fi

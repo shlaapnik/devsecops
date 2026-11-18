@@ -1,0 +1,68 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Shared preset: pinned digests, a 7-day cooldown, automerge of safe updates after green checks",
+  "extends": ["config:best-practices"],
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "platformAutomerge": false,
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "labels": ["security"]
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true
+  },
+  "pre-commit": {
+    "enabled": true
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The shared pipeline in GitLab CI: a remote include pinned to the commit of a release",
+      "managerFilePatterns": ["/(^|/)\\.gitlab-ci\\.ya?ml$/", "/(^|/)\\.gitlab/ci/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "raw\\.githubusercontent\\.com/(?<depName>shlaapnik/devsecops)/(?<currentDigest>[0-9a-f]{40})/templates/devsecops\\.yml\\s+#\\s*(?<currentValue>v\\S+)"
+      ],
+      "datasourceTemplate": "github-tags"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Patch, pin and digest updates merge once all checks pass",
+      "matchUpdateTypes": ["patch", "pin", "pinDigest", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Minor updates of stable (1.0+) dependencies merge once all checks pass",
+      "matchUpdateTypes": ["minor"],
+      "matchCurrentVersion": "!/^v?0\\./",
+      "automerge": true
+    },
+    {
+      "description": "Renovate cannot find the release age of these updates and would hold them forever. Set the cooldown of lock files in the package manager",
+      "matchUpdateTypes": ["lockFileMaintenance", "pin", "replacement", "rollback"],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "Only Docker Hub gives image release dates. Renovate proposes images from other registries at once, and a person merges them",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["/^[^/]*[.:][^/]*\\//", "!/^(docker\\.io|index\\.docker\\.io)\\//"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional",
+      "automerge": false
+    },
+    {
+      "description": "One PR for all GitHub Actions updates. A pipeline release gets its own PR, because it can bring new findings",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["!shlaapnik/devsecops"],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "A project that follows the shared pipeline on main does so on purpose; pinned releases still update",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["shlaapnik/devsecops"],
+      "matchCurrentValue": "main",
+      "enabled": false
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+[project]
+name = "devsecops"
+version = "0.1.0"
+description = "Self-updating DevSecOps pipeline for GitHub Actions and GitLab CI"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0.3,<7.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.4,<0.18.0",
+    "ty>=0.0.98,<0.1.0",
+]
+
+[tool.uv]
+package = false
+exclude-newer = "7 days"
+
+[tool.ty.src]
+exclude = ["canary"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["canary"]
+
+[tool.ruff.lint]
+select = ["ANN", "B", "E", "F", "I", "RUF", "S", "UP", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# The runner calls docker and git on purpose and mirrors the world-writable checkout of GitLab runners.
+"scripts/run_gitlab_component.py" = ["S103", "S603", "S607"]

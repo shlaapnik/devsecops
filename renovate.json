@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["local>shlaapnik/devsecops"],
+  "ignorePaths": ["**/node_modules/**", "canary/**"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Scanner images of the GitHub workflow and the GitLab component",
+      "managerFilePatterns": ["/^\\.github/workflows/scan\\.yml$/", "/^templates/devsecops\\.yml$/"],
+      "matchStrings": [
+        "_IMAGE: (?<depName>[^\\s:@]+):(?<currentValue>[^\\s@]+)@(?<currentDigest>sha256:[a-f0-9]{64})",
+        "name: (?<depName>[^\\s:@]+):(?<currentValue>[^\\s@]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "The canary tests each scanner update, so minor updates of 0.x scanners also merge after the 7-day cooldown. Majors and images without a release date wait for a person",
+      "matchFileNames": [".github/workflows/scan.yml", "templates/devsecops.yml"],
+      "matchUpdateTypes": ["minor"],
+      "matchPackageNames": ["!/^[^/]*[.:][^/]*\\//"],
+      "minimumReleaseAge": "7 days",
+      "automerge": true
+    },
+    {
+      "description": "Onboarding files reference this repository by a placeholder that bootstrap.sh fills in",
+      "matchFileNames": ["onboarding/**"],
+      "matchDepNames": ["shlaapnik/devsecops"],
+      "enabled": false
+    }
+  ]
+}

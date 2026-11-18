@@ -1,0 +1,3 @@
+# The canary has vulnerable dependencies on purpose.
+exclude:
+  - ./canary/**

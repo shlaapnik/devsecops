@@ -1,0 +1,8 @@
+# Vulnerabilities that Grype ignores. Write the reason and a review date for each one, for example:
+# ignore:
+#   - vulnerability: GHSA-xxxx-xxxx-xxxx
+#     reason: The project does not call the vulnerable code. Review before 2026-12-15.
+ignore: []
+# Paths that Grype does not scan, for example test data with vulnerable dependencies:
+# exclude:
+#   - ./tests/data/**
