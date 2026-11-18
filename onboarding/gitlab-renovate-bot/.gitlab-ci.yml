@@ -1,0 +1,14 @@
+# .gitlab-ci.yml of a separate, private "renovate-bot" project that updates all your other projects.
+#
+# CI/CD variables of that project:
+#   RENOVATE_TOKEN             personal or group access token: api, read_user, write_repository
+#   RENOVATE_GITHUB_COM_TOKEN  GitHub token without scopes, for github> presets, pipeline releases and release notes
+#   RENOVATE_EXTRA_FLAGS       --autodiscover=true --autodiscover-filter=<your-group>/* --onboarding=false
+#
+# Then add an hourly schedule under Build > Pipeline schedules, for example "3 * * * *".
+include:
+  - project: renovate-bot/renovate-runner
+    file: /templates/renovate.gitlab-ci.yml
+    ref: v26.1.0
+  # On a self-hosted GitLab without that project:
+  # - remote: https://gitlab.com/renovate-bot/renovate-runner/-/raw/v26.1.0/templates/renovate.gitlab-ci.yml

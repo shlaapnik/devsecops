@@ -1,0 +1,4 @@
+# Fingerprints of false secrets and of secrets that you replaced. Add one fingerprint on each line.
+# The pipeline ignores inline gitleaks:allow comments, so this file is the place for exceptions.
+# Copy the fingerprint from the Betterleaks report, for example:
+# 58b94a7e6228a419b9f3f02c3968a034ca31b89e:tests/test_config.py:generic-api-key:12

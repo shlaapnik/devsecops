@@ -1,0 +1,36 @@
+# Paths that Semgrep does not scan. Add one path or pattern on each line.
+# This file replaces the default list of Semgrep, so the default list is below.
+# Semgrep also skips the paths in .gitignore.
+
+# Version control
+.git
+.svn
+.hg
+_darcs
+CVS
+
+# Large files and folders
+build/
+vendor/
+dist/
+*.min.js
+.env/
+.tox/
+
+# Package managers
+node_modules/
+.npm/
+.yarn/
+.venv/
+_opam/
+_build/
+_cargo/
+
+# Tests
+test/
+tests/
+testsuite/
+*_test.go
+
+# Custom Semgrep rules of this project
+.semgrep/

@@ -1,0 +1,7 @@
+variables:
+  CI_DEBUG_TRACE: "true"
+
+build:
+  image: python:latest
+  script:
+    - curl -sSfL https://example.com/install.sh | sh

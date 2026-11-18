@@ -1,0 +1,3 @@
+# hadolint rules that do not apply to this project, for example: ignored: [DL3008]
+# The pipeline ignores inline "# hadolint ignore=" comments, so this file is the place for exceptions.
+ignored: []

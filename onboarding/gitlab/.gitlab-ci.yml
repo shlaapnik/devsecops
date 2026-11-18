@@ -1,0 +1,7 @@
+include:
+  - remote: https://raw.githubusercontent.com/shlaapnik/devsecops/__REF__/templates/devsecops.yml
+    # inputs:
+    #   enforce: false          # first runs on an old project: report only
+    #   skip: image             # no Dockerfile, or the build needs secrets
+    #   fail-on-severity: critical
+    #   merge-request-pipelines: true  # the project runs merge request pipelines

@@ -1,0 +1,5 @@
+# poutine findings to skip, for example:
+# skip:
+#   - rule: unverified_script_exec
+#     path: .gitlab-ci.yml
+skip: []

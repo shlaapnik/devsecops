@@ -1,0 +1,13 @@
+# zizmor policy and exceptions.
+# Each action must have a commit SHA. The shared pipeline can also use a branch.
+# To let your own repositories use a branch, add the line "<your-owner>/*": ref-pin
+# To ignore one finding, add its file and line under the rule, for example:
+#   template-injection:
+#     ignore:
+#       - release.yml:42
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "shlaapnik/devsecops/*": ref-pin
+        "*": hash-pin

@@ -1,0 +1,32 @@
+# Findings that each report of a canary run must contain: a rule ID or a file name.
+# scripts/check_canary.py examines only the findings of a report, not its list of rules. If a scanner
+# renames a rule, update the name here. The pipeline turns off inline ignore comments, so the
+# findings under them must stay. The gate also counts the findings that a report marks as suppressed.
+
+common:
+  betterleaks.sarif:
+    - age-secret-key # config.env
+    - allow-comment.env # the same key under gitleaks:allow
+  semgrep.sarif:
+    - subprocess-injection # app.py
+    - eval-injection # app.py, under nosemgrep
+  grype-source.sarif:
+    - GHSA-8q59-q68h-6hv4 # PyYAML 5.3 in requirements.txt
+    - GHSA-mh33-7rrq-662w # urllib3 1.23, a transitive dependency in uv.lock only
+  hadolint.sarif:
+    - DL3004 # sudo in bad.Dockerfile
+    - DL3020 # ADD under "hadolint ignore" in bad.Dockerfile
+  grype-image.sarif:
+    - CVE-2019-14697 # musl in the Alpine 3.10.0 image
+
+github:
+  zizmor.sarif:
+    - dangerous-triggers # pull_request_target in bad.yml
+    - template-injection # pull request title in run
+  actionlint.json:
+    - github.event.pull_request.title
+
+gitlab:
+  poutine.sarif:
+    - debug_enabled # CI_DEBUG_TRACE in .gitlab-ci.yml
+    - unverified_script_exec # curl | sh in .gitlab-ci.yml

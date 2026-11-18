@@ -1,0 +1,32 @@
+name: DevSecOps
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  # Nightly run catches CVEs published after the last commit.
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+# A new push to a pull request stops the old run. A run that started on main always finishes.
+concurrency:
+  group: devsecops-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scan:
+    name: Scan
+    uses: shlaapnik/devsecops/.github/workflows/scan.yml@__REF__
+    permissions:
+      actions: read # upload-sarif reads the run on private repositories
+      contents: read # check out the code
+      security-events: write # upload SARIF to code scanning
+    # with:
+    #   enforce: false          # first runs on an old project: report only
+    #   skip: image             # no Dockerfile, or the build needs secrets
+    #   fail-on-severity: critical

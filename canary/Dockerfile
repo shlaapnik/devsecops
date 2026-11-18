@@ -1,0 +1,3 @@
+FROM alpine:3.10.0
+
+USER 65534

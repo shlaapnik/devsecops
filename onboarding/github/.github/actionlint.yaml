@@ -1,0 +1,9 @@
+# Labels of your self-hosted runners, for example: labels: [gpu, linux-arm]
+# The pipeline accepts each label. The pre-commit hook uses this list.
+self-hosted-runner:
+  labels: []
+# Errors to ignore. Each item is a regular expression, for example:
+# paths:
+#   .github/workflows/release.yml:
+#     ignore:
+#       - 'shellcheck reported issue in this script: SC2086:.+'
