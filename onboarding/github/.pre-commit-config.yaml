@@ -1,7 +1,7 @@
 # Security hooks. Merge them into an existing .pre-commit-config.yaml, Renovate keeps the revs current.
 repos:
   - repo: https://github.com/betterleaks/betterleaks
-    rev: v1.10.0
+    rev: v1.10.1
     hooks:
       - id: betterleaks
 
