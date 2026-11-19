@@ -24,6 +24,15 @@
       "automerge": true
     },
     {
+      "description": "Renovate cannot find the release date of a ghcr.io image. The cooldown workflow merges minor and patch updates 7 days after the GitHub release",
+      "matchFileNames": [".github/workflows/scan.yml", "templates/devsecops.yml"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["/^ghcr\\.io\\//"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "minimumReleaseAge": "7 days",
+      "addLabels": ["cooldown"]
+    },
+    {
       "description": "Onboarding files reference this repository by a placeholder that bootstrap.sh fills in",
       "matchFileNames": ["onboarding/**"],
       "matchDepNames": ["shlaapnik/devsecops"],

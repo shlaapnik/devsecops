@@ -1,0 +1,83 @@
+name: Cooldown
+
+# Renovate cannot find the release date of an image on ghcr.io, so it cannot wait 7 days. Each day,
+# this workflow finds the GitHub release with the tag of the image and merges the pull request when
+# the release is 7 days old. renovate.json adds the cooldown label only to minor and patch updates,
+# so a person still merges major updates.
+on:
+  schedule:
+    - cron: "0 17 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: cooldown
+
+jobs:
+  merge:
+    name: Merge image updates after 7 days
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      contents: write
+      pull-requests: write
+      statuses: read
+    steps:
+      - name: Merge the pull requests whose releases are 7 days old
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cooldown=$((7 * 24 * 3600))
+          now=$(date +%s)
+          failed=0
+          prs=$(gh pr list --state open --label cooldown --author app/renovate --json number --jq '.[].number')
+          for pr in $prs; do
+            # Merge only the commit that this run examined.
+            head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
+            images=$(gh pr diff "$pr" | grep -E '^\+[^+]' \
+              | grep -oE 'ghcr\.io/[^:@[:space:]]+:[^@[:space:]]+@sha256' | sort -u || true)
+            if [[ -z "$images" ]]; then
+              echo "::warning title=Cooldown::PR #$pr has the cooldown label, but it adds no ghcr.io image"
+              continue
+            fi
+            ready=true
+            for image in $images; do
+              tag=${image#*:}
+              tag=${tag%@sha256}
+              source=$(cut -d / -f 2,3 <<< "${image%%:*}")
+              # An image tag can have a variant suffix, for example -debug. A release tag can start with v.
+              version=${tag%%-*}
+              published=""
+              for candidate in "$version" "v$version"; do
+                published=$(gh api "repos/$source/releases/tags/$candidate" --jq .published_at 2>/dev/null || true)
+                if [[ -n "$published" ]]; then
+                  break
+                fi
+              done
+              if [[ -z "$published" ]]; then
+                echo "::warning title=Cooldown::PR #$pr: $source has no GitHub release $version. A person must merge it."
+                ready=false
+              elif (( now - $(date -d "$published" +%s) < cooldown )); then
+                echo "PR #$pr: $source $version was released at $published, less than 7 days ago"
+                ready=false
+              fi
+            done
+            if [[ "$ready" != true ]]; then
+              continue
+            fi
+            if ! gh pr checks "$pr" --required > /dev/null; then
+              echo "PR #$pr: the required checks did not pass"
+              continue
+            fi
+            if gh pr merge "$pr" --squash --match-head-commit "$head"; then
+              echo "::notice title=Cooldown::Merged PR #$pr"
+            else
+              echo "::error title=Cooldown::Cannot merge PR #$pr"
+              failed=1
+            fi
+          done
+          exit "$failed"

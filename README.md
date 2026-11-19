@@ -166,8 +166,9 @@ component: `component: $CI_SERVER_FQDN/<group>/devsecops/devsecops@<version>`.
 NOTE: A person must examine each major update.
 
 NOTE: Only Docker Hub gives the release date of an image. For images from other registries, for
-example ghcr.io, Renovate cannot wait 7 days. Renovate opens the pull request immediately, and a
-person merges it 7 days after the release.
+example ghcr.io, Renovate cannot wait 7 days. Renovate opens the pull request immediately. Each day,
+[cooldown.yml](.github/workflows/cooldown.yml) finds the GitHub release of the image. When the
+release is 7 days old and the self-test passes, the workflow merges the minor or patch update.
 
 NOTE: In March 2026, attackers published a malicious Trivy release. The Trivy team removed it in
 less than one day. The 7-day delay prevents this type of attack.
@@ -353,6 +354,7 @@ Use an AI agent for these tasks:
 .github/workflows/scan.yml       The reusable GitHub workflow.
 .github/workflows/self-test.yml  The scan and lint of this repository, and the canary runs.
 .github/workflows/release.yml    The weekly patch release.
+.github/workflows/cooldown.yml   The merge of ghcr.io image updates 7 days after the release.
 templates/devsecops.yml          The GitLab CI/CD component.
 default.json                     The shared Renovate preset for projects.
 renovate.json                    The Renovate configuration of this repository.
