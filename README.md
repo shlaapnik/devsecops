@@ -161,6 +161,7 @@ component: `component: $CI_SERVER_FQDN/<group>/devsecops/devsecops@<version>`.
 4. The self-test runs the GitHub and GitLab pipelines on [canary/](canary/).
 5. If a scanner does not find each finding of [canary/expected.yml](canary/expected.yml), the self-test fails.
 6. If the self-test passes, Renovate merges the minor or patch update.
+7. Each Monday, [release.yml](.github/workflows/release.yml) makes a patch release of the merged updates.
 
 NOTE: A person must examine each major update.
 
@@ -202,6 +203,9 @@ a separate pull request:
 
 - On GitHub, in the `uses` line of the workflow.
 - On GitLab, in the `include: remote` URL. The shared preset contains the rule for this URL.
+
+Each Monday, the release workflow makes a patch release if `main` has changes and the self-test
+passes. A person makes minor and major releases: **Run workflow** with a version.
 
 You can also use `main` in place of the SHA. Then your project gets each change without a pull
 request. Renovate does not change `main`. On GitHub, zizmor accepts `main` because of the line
@@ -348,6 +352,7 @@ Use an AI agent for these tasks:
 ```text
 .github/workflows/scan.yml       The reusable GitHub workflow.
 .github/workflows/self-test.yml  The scan and lint of this repository, and the canary runs.
+.github/workflows/release.yml    The weekly patch release.
 templates/devsecops.yml          The GitLab CI/CD component.
 default.json                     The shared Renovate preset for projects.
 renovate.json                    The Renovate configuration of this repository.

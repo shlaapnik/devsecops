@@ -160,6 +160,7 @@ Job используют такие коды выхода:
 4. Self-test запускает пайплайны GitHub и GitLab на [canary/](canary/).
 5. Если сканер не находит хотя бы одну находку из [canary/expected.yml](canary/expected.yml), self-test не проходит.
 6. Если self-test прошёл, Renovate мёржит minor- или patch-обновление.
+7. Каждый понедельник [release.yml](.github/workflows/release.yml) выпускает patch-релиз со смёрженными обновлениями.
 
 ПРИМЕЧАНИЕ: Каждое major-обновление проверяет человек.
 
@@ -200,6 +201,9 @@ Renovate не может задержать транзитивные обнов�
 
 - в GitHub — в строке `uses` в workflow;
 - в GitLab — в URL `include: remote`. Правило для этого URL есть в общем пресете.
+
+Каждый понедельник workflow релизов выпускает patch-релиз, если в `main` есть изменения и self-test
+прошёл. Minor- и major-релизы выпускает человек: **Run workflow** с указанием версии.
 
 Вместо SHA можно указать `main`. Тогда проект получает каждое изменение без pull request. Renovate
 не меняет `main`. В GitHub zizmor разрешает `main` благодаря строке
@@ -345,6 +349,7 @@ ignore:
 ```text
 .github/workflows/scan.yml       Переиспользуемый workflow для GitHub.
 .github/workflows/self-test.yml  Сканирование и линт этого репозитория, запуски на canary.
+.github/workflows/release.yml    Еженедельный patch-релиз.
 templates/devsecops.yml          CI/CD-компонент для GitLab.
 default.json                     Общий пресет Renovate для проектов.
 renovate.json                    Конфигурация Renovate этого репозитория.
