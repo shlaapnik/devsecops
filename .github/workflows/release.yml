@@ -1,0 +1,71 @@
+name: Release
+
+# Each Monday, after the weekly self-test, a patch release ships the changes of the week, for example
+# scanner updates. Projects that pin a release get them in a Renovate pull request.
+on:
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, for example v0.2.0. Empty: the next patch version."
+        required: false
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: release
+
+jobs:
+  release:
+    name: Release the changes on main
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Release the next version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          last=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+          if [[ -n "$last" && "$(git rev-list -n 1 "$last")" == "$sha" ]]; then
+            echo "No changes on main since $last"
+            exit 0
+          fi
+          # The self-test can run more than one time on a commit, so only the last finished run counts.
+          result=$(gh run list --workflow self-test.yml --commit "$sha" --status completed --limit 1 \
+            --json conclusion --jq '.[0].conclusion // ""')
+          if [[ "$result" != "success" ]]; then
+            echo "::error title=Release::The last self-test on $sha did not pass"
+            exit 1
+          fi
+          if [[ -n "$VERSION" ]]; then
+            if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error title=Release::$VERSION is not a version like v1.2.3"
+              exit 1
+            fi
+            next="$VERSION"
+          elif [[ -z "$last" ]]; then
+            next=v0.1.0
+          else
+            IFS=. read -r major minor patch <<< "${last#v}"
+            next="v$major.$minor.$((patch + 1))"
+          fi
+          args=(--target "$sha" --title "$next" --generate-notes)
+          if [[ -n "$last" ]]; then
+            args+=(--notes-start-tag "$last")
+          fi
+          gh release create "$next" "${args[@]}"
