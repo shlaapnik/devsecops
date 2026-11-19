@@ -165,8 +165,9 @@ Job используют такие коды выхода:
 ПРИМЕЧАНИЕ: Каждое major-обновление проверяет человек.
 
 ПРИМЕЧАНИЕ: Дату релиза образа даёт только Docker Hub. Для образов из других реестров, например
-ghcr.io, Renovate не может ждать 7 дней. Renovate сразу открывает pull request, а человек мёржит
-его через 7 дней после релиза.
+ghcr.io, Renovate не может ждать 7 дней. Renovate сразу открывает pull request. Каждый день
+[cooldown.yml](.github/workflows/cooldown.yml) находит GitHub-релиз образа. Когда релизу исполняется
+7 дней и self-test проходит, workflow мёржит minor- или patch-обновление.
 
 ПРИМЕЧАНИЕ: В марте 2026 года злоумышленники выпустили вредоносный релиз Trivy. Команда Trivy
 удалила его меньше чем за сутки. Задержка в 7 дней защищает от таких атак.
@@ -350,6 +351,7 @@ ignore:
 .github/workflows/scan.yml       Переиспользуемый workflow для GitHub.
 .github/workflows/self-test.yml  Сканирование и линт этого репозитория, запуски на canary.
 .github/workflows/release.yml    Еженедельный patch-релиз.
+.github/workflows/cooldown.yml   Merge обновлений образов с ghcr.io через 7 дней после релиза.
 templates/devsecops.yml          CI/CD-компонент для GitLab.
 default.json                     Общий пресет Renovate для проектов.
 renovate.json                    Конфигурация Renovate этого репозитория.
