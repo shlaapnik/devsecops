@@ -249,6 +249,33 @@ can fail.
 | `stage` | `test` | GitLab only. The stage of the jobs. |
 | `merge-request-pipelines` | `false` | GitLab only. Set `true` if the project runs merge request pipelines. |
 
+### Several images
+
+The image check builds one Dockerfile. On GitHub, call the workflow one more time for the other
+images and skip the other checks:
+
+```yaml
+  images:
+    name: Image ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [backend, frontend]
+    uses: shlaapnik/devsecops/.github/workflows/scan.yml@<commit-sha> # vX.Y.Z
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    with:
+      skip: secrets,ci,sast,deps,dockerfiles
+      dockerfile: ${{ matrix.image }}/Dockerfile
+      docker-context: ${{ matrix.image }}
+      report-name: image-${{ matrix.image }}
+```
+
+Keep `path` at `.`. Then Grype reads `.grype.yaml` from the root of the repository. Each call must
+have its own `report-name`. On GitLab, the component examines one image.
+
 ## Add the pipeline to an existing project
 
 1. Set `enforce: false` for the first runs.

@@ -247,6 +247,33 @@ Renovate не знает, совместима ли новая версия. Ren
 | `stage` | `test` | Только GitLab. Стадия job. |
 | `merge-request-pipelines` | `false` | Только GitLab. `true`, если в проекте есть пайплайны merge request. |
 
+### Несколько образов
+
+Проверка образа собирает один Dockerfile. В GitHub вызовите workflow ещё раз для остальных образов
+и пропустите другие проверки:
+
+```yaml
+  images:
+    name: Image ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [backend, frontend]
+    uses: shlaapnik/devsecops/.github/workflows/scan.yml@<commit-sha> # vX.Y.Z
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    with:
+      skip: secrets,ci,sast,deps,dockerfiles
+      dockerfile: ${{ matrix.image }}/Dockerfile
+      docker-context: ${{ matrix.image }}
+      report-name: image-${{ matrix.image }}
+```
+
+Оставьте `path` равным `.`: тогда Grype читает `.grype.yaml` из корня репозитория. У каждого вызова
+должен быть свой `report-name`. В GitLab компонент проверяет один образ.
+
 ## Подключение к существующему проекту
 
 1. Для первых запусков задайте `enforce: false`.

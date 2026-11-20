@@ -581,7 +581,17 @@ jobs:
             echo "findings=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          docker build --pull --file "$DOCKERFILE" --tag devsecops/scan:local "$BUILD_CONTEXT"
+          # A build downloads base images and packages, and a network failure fails it like a real error.
+          for attempt in 1 2 3; do
+            if docker build --pull --file "$DOCKERFILE" --tag devsecops/scan:local "$BUILD_CONTEXT"; then
+              break
+            fi
+            if (( attempt == 3 )); then
+              echo "::error title=Image::The image build failed three times"
+              exit 1
+            fi
+            sleep 30
+          done
           docker save devsecops/scan:local --output "$image_dir/image.tar"
           run() {
             docker run --rm --user "$(id -u):$(id -g)" \
