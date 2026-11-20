@@ -299,6 +299,11 @@ devsecops-image-build:
   variables:
     DEVSECOPS_DOCKERFILE: "$[[ inputs.dockerfile ]]"
     DEVSECOPS_DOCKER_CONTEXT: "$[[ inputs.docker-context ]]"
+  # A build downloads base images and packages, and a network failure fails it like a real error.
+  # A new try gets a clean container, because kaniko builds inside its own file system.
+  retry:
+    max: 2
+    when: script_failure
   rules:
     - if: $DEVSECOPS_SKIP =~ /image/
       when: never
