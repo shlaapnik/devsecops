@@ -76,7 +76,7 @@ env:
   GRYPE_IMAGE: anchore/grype:v0.121.3@sha256:13113eeceab017260370cf540e1d25442c59665fd07d1b09b66d63bb0c282887
   HADOLINT_IMAGE: hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
   SEMGREP_IMAGE: semgrep/semgrep:1.185.0@sha256:67518c174185a2043fdbed16c70631b79209499b3671178e7194379b48295a0d
-  ZIZMOR_IMAGE: ghcr.io/zizmorcore/zizmor:1.32.0@sha256:3014cc8f68f663935f69b3c3e0e41f5ce102b268d97db13db0f62208747f860d
+  ZIZMOR_IMAGE: ghcr.io/zizmorcore/zizmor:1.33.0@sha256:1b9bebe30894567d922aa8467ec3b6d39d8f4f65b7736addbda6e83d1b0c477f
   SCAN_PATH: ${{ inputs.path }}
 
 jobs:
