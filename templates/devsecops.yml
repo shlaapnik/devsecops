@@ -224,7 +224,7 @@ devsecops-sast:
 devsecops-deps:
   extends: .devsecops-base
   image:
-    name: anchore/grype:v0.121.3-debug@sha256:09301bc98ed5eba53b9c5f56cb0f7d4637a9cece469c9feae9e64624a6a31e8c
+    name: anchore/grype:v0.122.0-debug@sha256:050af5654b74bf998e89cb3111c471cee8b71da26af7aafe3458180b4772a843
     entrypoint: [""]
   rules:
     - if: $DEVSECOPS_SKIP =~ /deps/
@@ -327,7 +327,7 @@ devsecops-image-build:
 devsecops-image:
   extends: .devsecops-base
   image:
-    name: anchore/grype:v0.121.3-debug@sha256:09301bc98ed5eba53b9c5f56cb0f7d4637a9cece469c9feae9e64624a6a31e8c
+    name: anchore/grype:v0.122.0-debug@sha256:050af5654b74bf998e89cb3111c471cee8b71da26af7aafe3458180b4772a843
     entrypoint: [""]
   needs:
     - job: devsecops-image-build
