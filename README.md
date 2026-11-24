@@ -151,6 +151,75 @@ The jobs use these exit codes:
 You can also mirror this repository to your GitLab instance. Then use the file as a CI/CD
 component: `component: $CI_SERVER_FQDN/<group>/devsecops/devsecops@<version>`.
 
+## Telegram alerts
+
+The nightly run finds vulnerabilities published after a release. Without an alert nobody learns of
+them until they open CI. When a run fails, the gate sends a Telegram message:
+
+```text
+🔴 acme/shop: DevSecOps found problems
+image-postgres · main · schedule
+Failed: image (24)
+• libkrb5-3 1.21.3-5+deb13u1 → 1.21.3-5+deb13u2: CVE-2026-112314 High +5
+Run and reports
+```
+
+It lists up to five of the worst packages from the Grype reports: version, fixed version and CVE.
+The other packages and the findings of the other scanners are in the run reports.
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and add it to the team chat. Use a
+   separate bot, not the one of your app: its token lives in CI.
+2. Get the chat id, for example from `https://api.telegram.org/bot<token>/getUpdates`.
+3. GitHub: add the repository secrets `DEVSECOPS_TELEGRAM_TOKEN` and `DEVSECOPS_TELEGRAM_CHAT_ID`
+   and pass them to the workflow:
+
+   ```yaml
+   jobs:
+     scan:
+       uses: shlaapnik/devsecops/.github/workflows/scan.yml@<commit-sha> # vX.Y.Z
+       secrets:
+         telegram-token: ${{ secrets.DEVSECOPS_TELEGRAM_TOKEN }}
+         telegram-chat-id: ${{ secrets.DEVSECOPS_TELEGRAM_CHAT_ID }}
+   ```
+
+4. GitLab: add the masked CI/CD variables `DEVSECOPS_TELEGRAM_TOKEN` and
+   `DEVSECOPS_TELEGRAM_CHAT_ID`. The `devsecops-notify` job sends the message.
+
+By default only a scheduled run sends a message: a red pull request is visible anyway. The `notify`
+input changes that: `failure` sends one after every failed run, `never` turns them off. Without the
+secrets or variables the pipeline only logs that no message went out.
+
+## Scan the images on a server
+
+CI scans a fresh build. A server runs images built weeks ago, and a new CVE hits them with no CI run
+at all. [scripts/scan_running.py](scripts/scan_running.py) scans the images of running containers
+with the same Grype and sends the same message.
+
+- It needs only the Python 3 standard library and the server's Docker CLI.
+- `--project` takes the images of one Docker Compose project, `--image` names images one by one.
+  Other containers of the server are left alone.
+- Grype gets the image from `docker save` on stdin. The scanner container needs no Docker socket.
+- The scanner is limited to one CPU and 2 GB of memory. The Grype database stays in the
+  `devsecops-grype-db` volume.
+- `--config` passes the project's ignore file, usually `.grype.yaml`.
+- `--state` keeps the findings already sent. A message goes out only for a new package or CVE: a
+  third-party image waiting for its fix does not repeat every night.
+- Exit codes: 0 no vulnerabilities, 1 vulnerabilities found, 3 the scan or the message failed.
+
+Run it nightly by cron. Take it from a release, not from `main`:
+
+```sh
+curl -fsSLo ~/devsecops/scan_running.py \
+  https://raw.githubusercontent.com/shlaapnik/devsecops/<commit-sha>/scripts/scan_running.py
+# ~/devsecops/telegram.env, mode 600:
+#   export DEVSECOPS_TELEGRAM_TOKEN=...
+#   export DEVSECOPS_TELEGRAM_CHAT_ID=...
+# crontab -e:
+30 4 * * * . ~/devsecops/telegram.env && python3 ~/devsecops/scan_running.py --project shop --config /srv/shop/.grype.yaml --state ~/devsecops/state.json >> ~/devsecops/scan.log 2>&1
+```
+
+Without the Telegram variables, or with `--dry-run`, the script prints the message and sends nothing.
+
 ## Updates
 
 ### Scanner updates
@@ -248,6 +317,7 @@ can fail.
 | `report-name` | `devsecops` | GitHub only. The artifact prefix, if one run calls the workflow two times. |
 | `stage` | `test` | GitLab only. The stage of the jobs. |
 | `merge-request-pipelines` | `false` | GitLab only. Set `true` if the project runs merge request pipelines. |
+| `notify` | `schedule` | When failed checks go to Telegram: `schedule`, `failure` or `never`. See [Telegram alerts](#telegram-alerts). |
 
 ### Several images
 
@@ -388,7 +458,7 @@ renovate.json                    The Renovate configuration of this repository.
 canary/                          The project with known issues for the self-test.
 onboarding/                      The files that bootstrap.sh copies into a project.
 onboarding/gitlab-renovate-bot/  The separate Renovate project for GitLab. The script does not copy it.
-scripts/                         The bootstrap script, the GitLab component runner and the canary check.
+scripts/                         The bootstrap script, the GitLab component runner, the canary check and the server scan.
 ```
 
 ## License

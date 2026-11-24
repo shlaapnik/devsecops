@@ -48,6 +48,9 @@ jobs:
       - name: Lint and type check Python
         run: uv run --frozen ruff check . && uv run --frozen ruff format --check . && uv run --frozen ty check
 
+      - name: Test the scripts
+        run: uv run --frozen python -m unittest discover -s scripts
+
       - name: Check the shell script
         run: shellcheck scripts/bootstrap.sh
 

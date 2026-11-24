@@ -47,6 +47,19 @@ on:
         description: Prefix of artifact names and SARIF categories. Change it when one run calls this workflow twice.
         type: string
         default: devsecops
+      notify:
+        description: >-
+          When the gate sends failed checks to Telegram: schedule (scheduled runs only, the default), failure
+          (every failed run) or never. Needs the telegram-token and telegram-chat-id secrets.
+        type: string
+        default: schedule
+    secrets:
+      telegram-token:
+        description: Token of the Telegram bot that sends the failure message.
+        required: false
+      telegram-chat-id:
+        description: Telegram chat that gets the failure message.
+        required: false
     outputs:
       secrets:
         description: Blocking findings from Betterleaks.
@@ -78,6 +91,22 @@ env:
   SEMGREP_IMAGE: semgrep/semgrep:1.185.0@sha256:67518c174185a2043fdbed16c70631b79209499b3671178e7194379b48295a0d
   ZIZMOR_IMAGE: ghcr.io/zizmorcore/zizmor:1.33.0@sha256:1b9bebe30894567d922aa8467ec3b6d39d8f4f65b7736addbda6e83d1b0c477f
   SCAN_PATH: ${{ inputs.path }}
+  # The vulnerable packages of a Grype report at the threshold or above, worst first: the lines of the
+  # Telegram message.
+  TOP_PACKAGES: |
+    def rank: {"negligible": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}[ascii_downcase] // 0;
+    [.matches[] | select((.vulnerability.severity | rank) >= ($threshold | rank))]
+    | group_by(.artifact.name + " " + .artifact.version)
+    | map({
+        name: .[0].artifact.name, version: .[0].artifact.version,
+        fix: ([.[].vulnerability.fix.versions[]?] | unique | join(", ")),
+        ids: ([.[].vulnerability.id] | unique), severity: ([.[].vulnerability.severity] | max_by(rank))
+      })
+    | sort_by(-(.severity | rank), .name)
+    | (.[:5] | map("\(.name) \(.version) → \(.fix): \(.ids[0]) \(.severity)"
+        + (if (.ids | length) > 1 then " +\((.ids | length) - 1)" else "" end)))
+      + (if length > 5 then ["… \(length - 5) more packages"] else [] end)
+    | join("\n")
 
 jobs:
   secrets:
@@ -410,6 +439,7 @@ jobs:
       security-events: write
     outputs:
       findings: ${{ steps.scan.outputs.findings }}
+      top: ${{ steps.scan.outputs.top }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -441,8 +471,13 @@ jobs:
             def rank: {"negligible": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}[ascii_downcase] // 0;
             [.matches[] | select((.vulnerability.severity | rank) >= ($threshold | rank))] | length
           ' "$out/grype-source.json")
-          echo "findings=$findings" >> "$GITHUB_OUTPUT"
-          echo "report=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "findings=$findings"
+            echo "report=true"
+            echo "top<<DEVSECOPS_TOP"
+            jq -r --arg threshold "$SEVERITY" "$TOP_PACKAGES" "$out/grype-source.json"
+            echo "DEVSECOPS_TOP"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Keep reports and the SBOM
         if: ${{ !cancelled() }}
@@ -558,6 +593,7 @@ jobs:
       security-events: write
     outputs:
       findings: ${{ steps.scan.outputs.findings }}
+      top: ${{ steps.scan.outputs.top }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -611,8 +647,13 @@ jobs:
             def rank: {"negligible": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}[ascii_downcase] // 0;
             [.matches[] | select((.vulnerability.severity | rank) >= ($threshold | rank))] | length
           ' "$out/grype-image.json")
-          echo "findings=$findings" >> "$GITHUB_OUTPUT"
-          echo "report=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "findings=$findings"
+            echo "report=true"
+            echo "top<<DEVSECOPS_TOP"
+            jq -r --arg threshold "$SEVERITY" "$TOP_PACKAGES" "$out/grype-image.json"
+            echo "DEVSECOPS_TOP"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Keep reports and the SBOM
         if: ${{ !cancelled() }}
@@ -672,3 +713,41 @@ jobs:
             echo "::error title=DevSecOps::Failed checks: $failed"
             exit 1
           fi
+
+      # The nightly run finds CVEs published after a release: the team hears of them without opening CI.
+      - name: Send the failed checks to Telegram
+        if: >-
+          ${{ failure() && (inputs.notify == 'failure' || (inputs.notify == 'schedule' && github.event_name == 'schedule')) }}
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          TOKEN: ${{ secrets.telegram-token }}
+          CHAT: ${{ secrets.telegram-chat-id }}
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          REPORT: ${{ inputs.report-name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$TOKEN" || -z "$CHAT" ]]; then
+            echo "::notice title=DevSecOps::No telegram-token or telegram-chat-id secret, no message sent"
+            exit 0
+          fi
+          escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+          failed=$(jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled")
+            | .key + (if (.value.outputs.findings // "0") != "0" then " (\(.value.outputs.findings))" else "" end)]
+            | join(", ")' <<< "$NEEDS")
+          packages=$(jq -r '[.deps.outputs.top, .image.outputs.top] | map(select(. != null and . != "")) | join("\n")' \
+            <<< "$NEEDS")
+          nl=$'\n'
+          text="🔴 <b>$(escape <<< "$REPOSITORY")</b>: DevSecOps found problems"
+          text+="$nl$(escape <<< "$REPORT · $REF · $EVENT")"
+          text+="${nl}Failed: $(escape <<< "$failed")"
+          if [[ -n "$packages" ]]; then
+            text+="$nl$(escape <<< "• ${packages//$nl/$nl• }")"
+          fi
+          text+="$nl<a href=\"$RUN_URL\">Run and reports</a>"
+          # The token stays out of the log: curl prints no URL on an error, and GitHub masks secrets.
+          curl -fsS --retry 3 --max-time 20 -o /dev/null "https://api.telegram.org/bot$TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$CHAT" --data-urlencode "text=$text" \
+            --data-urlencode "parse_mode=HTML" --data-urlencode 'link_preview_options={"is_disabled":true}'

@@ -30,3 +30,8 @@ jobs:
     #   enforce: false          # first runs on an old project: report only
     #   skip: image             # no Dockerfile, or the build needs secrets
     #   fail-on-severity: critical
+    #   notify: failure         # Telegram on every failed run, not only the nightly one
+    # A failed nightly run goes to Telegram once these repository secrets exist; without them it only logs.
+    secrets:
+      telegram-token: ${{ secrets.DEVSECOPS_TELEGRAM_TOKEN }}
+      telegram-chat-id: ${{ secrets.DEVSECOPS_TELEGRAM_CHAT_ID }}
