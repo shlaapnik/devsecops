@@ -5,11 +5,16 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Scanner images of the GitHub workflow and the GitLab component",
-      "managerFilePatterns": ["/^\\.github/workflows/scan\\.yml$/", "/^templates/devsecops\\.yml$/"],
+      "description": "Scanner images of the GitHub workflow, the GitLab component and the server scan",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/scan\\.yml$/",
+        "/^templates/devsecops\\.yml$/",
+        "/^scripts/scan_running\\.py$/"
+      ],
       "matchStrings": [
         "_IMAGE: (?<depName>[^\\s:@]+):(?<currentValue>[^\\s@]+)@(?<currentDigest>sha256:[a-f0-9]{64})",
-        "name: (?<depName>[^\\s:@]+):(?<currentValue>[^\\s@]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+        "name: (?<depName>[^\\s:@]+):(?<currentValue>[^\\s@]+)@(?<currentDigest>sha256:[a-f0-9]{64})",
+        "\"(?<depName>[^\\s\":@]+):(?<currentValue>[^\\s\"@]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
       ],
       "datasourceTemplate": "docker"
     }
@@ -17,7 +22,7 @@
   "packageRules": [
     {
       "description": "The canary tests each scanner update, so minor updates of 0.x scanners also merge after the 7-day cooldown. Majors and images without a release date wait for a person",
-      "matchFileNames": [".github/workflows/scan.yml", "templates/devsecops.yml"],
+      "matchFileNames": [".github/workflows/scan.yml", "templates/devsecops.yml", "scripts/scan_running.py"],
       "matchUpdateTypes": ["minor"],
       "matchPackageNames": ["!/^[^/]*[.:][^/]*\\//"],
       "minimumReleaseAge": "7 days",
@@ -25,7 +30,7 @@
     },
     {
       "description": "Renovate cannot find the release date of a ghcr.io image. The cooldown workflow merges minor and patch updates 7 days after the GitHub release",
-      "matchFileNames": [".github/workflows/scan.yml", "templates/devsecops.yml"],
+      "matchFileNames": [".github/workflows/scan.yml", "templates/devsecops.yml", "scripts/scan_running.py"],
       "matchDatasources": ["docker"],
       "matchPackageNames": ["/^ghcr\\.io\\//"],
       "matchUpdateTypes": ["minor", "patch"],

@@ -150,6 +150,74 @@ Job используют такие коды выхода:
 Репозиторий можно зеркалировать в ваш GitLab. Тогда используйте файл как CI/CD-компонент:
 `component: $CI_SERVER_FQDN/<группа>/devsecops/devsecops@<версия>`.
 
+## Уведомления в Telegram
+
+Ночной запуск находит уязвимости, которые опубликовали после релиза. Без уведомления о них никто
+не узнает, пока не откроет CI. Если запуск упал, гейт присылает в Telegram сообщение:
+
+```text
+🔴 acme/shop: DevSecOps found problems
+image-postgres · main · schedule
+Failed: image (24)
+• libkrb5-3 1.21.3-5+deb13u1 → 1.21.3-5+deb13u2: CVE-2026-112314 High +5
+Run and reports
+```
+
+В списке до пяти самых опасных пакетов из отчётов Grype: версия, исправленная версия и CVE.
+Остальные пакеты и находки других сканеров есть в отчётах запуска.
+
+1. Создайте бота в [@BotFather](https://t.me/BotFather) и добавьте его в чат команды. Отдельный
+   бот лучше бота приложения: его токен лежит в CI.
+2. Узнайте id чата, например через `https://api.telegram.org/bot<токен>/getUpdates`.
+3. GitHub: добавьте секреты репозитория `DEVSECOPS_TELEGRAM_TOKEN` и `DEVSECOPS_TELEGRAM_CHAT_ID`
+   и передайте их в workflow:
+
+   ```yaml
+   jobs:
+     scan:
+       uses: shlaapnik/devsecops/.github/workflows/scan.yml@<commit-sha> # vX.Y.Z
+       secrets:
+         telegram-token: ${{ secrets.DEVSECOPS_TELEGRAM_TOKEN }}
+         telegram-chat-id: ${{ secrets.DEVSECOPS_TELEGRAM_CHAT_ID }}
+   ```
+
+4. GitLab: добавьте masked CI/CD-переменные `DEVSECOPS_TELEGRAM_TOKEN` и
+   `DEVSECOPS_TELEGRAM_CHAT_ID`. Job `devsecops-notify` отправит сообщение сама.
+
+По умолчанию сообщение приходит только после запуска по расписанию: красные pull request видны и
+так. Input `notify` меняет это: `failure` шлёт сообщение после каждого упавшего запуска, `never`
+отключает отправку. Без секретов или переменных пайплайн только пишет об этом в лог.
+
+## Скан образов на сервере
+
+CI проверяет свежую сборку. На сервере работают образы, собранные недели назад, и новая CVE
+находит их без единого запуска CI. Скрипт [scripts/scan_running.py](scripts/scan_running.py)
+проверяет образы запущенных контейнеров тем же Grype и шлёт то же сообщение.
+
+- Скрипт использует только стандартную библиотеку Python 3 и Docker CLI сервера.
+- `--project` берёт образы одного проекта Docker Compose, `--image` задаёт образы по одному.
+  Остальные контейнеры сервера скрипт не трогает.
+- Grype получает образ из `docker save` через stdin. Контейнеру сканера не нужен сокет Docker.
+- Сканер ограничен одним CPU и 2 ГБ памяти. База Grype хранится в томе `devsecops-grype-db`.
+- `--config` передаёт файл исключений проекта, обычно `.grype.yaml`.
+- `--state` хранит уже отправленные находки. Сообщение уходит, только если появился новый пакет
+  или CVE. Сторонний образ, который ждёт исправления, не повторяется каждую ночь.
+- Коды выхода: 0 — уязвимостей нет, 1 — уязвимости есть, 3 — скан или отправка не удались.
+
+Запускайте скрипт по cron ночью. Возьмите его из релиза, а не из `main`:
+
+```sh
+curl -fsSLo ~/devsecops/scan_running.py \
+  https://raw.githubusercontent.com/shlaapnik/devsecops/<commit-sha>/scripts/scan_running.py
+# ~/devsecops/telegram.env, права 600:
+#   export DEVSECOPS_TELEGRAM_TOKEN=...
+#   export DEVSECOPS_TELEGRAM_CHAT_ID=...
+# crontab -e:
+30 4 * * * . ~/devsecops/telegram.env && python3 ~/devsecops/scan_running.py --project shop --config /srv/shop/.grype.yaml --state ~/devsecops/state.json >> ~/devsecops/scan.log 2>&1
+```
+
+Без переменных Telegram или с `--dry-run` скрипт печатает сообщение и ничего не отправляет.
+
 ## Обновления
 
 ### Обновления сканеров
@@ -246,6 +314,7 @@ Renovate не знает, совместима ли новая версия. Ren
 | `report-name` | `devsecops` | Только GitHub. Префикс артефактов, если один запуск вызывает workflow два раза. |
 | `stage` | `test` | Только GitLab. Стадия job. |
 | `merge-request-pipelines` | `false` | Только GitLab. `true`, если в проекте есть пайплайны merge request. |
+| `notify` | `schedule` | Когда слать упавшие проверки в Telegram: `schedule`, `failure` или `never`. См. [Уведомления в Telegram](#уведомления-в-telegram). |
 
 ### Несколько образов
 
@@ -385,7 +454,7 @@ renovate.json                    Конфигурация Renovate этого р
 canary/                          Проект с известными проблемами для self-test.
 onboarding/                      Файлы, которые bootstrap.sh копирует в проект.
 onboarding/gitlab-renovate-bot/  Отдельный проект Renovate для GitLab. Скрипт его не копирует.
-scripts/                         Скрипт bootstrap, раннер GitLab-компонента и проверка canary.
+scripts/                         Скрипт bootstrap, раннер GitLab-компонента, проверка canary и скан сервера.
 ```
 
 ## Лицензия

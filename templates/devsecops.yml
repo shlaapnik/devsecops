@@ -39,6 +39,12 @@ spec:
         only, so the include never adds merge request pipelines to a project.
       type: boolean
       default: false
+    notify:
+      description: >-
+        When a failed check goes to Telegram: schedule (scheduled pipelines only), failure (every failed
+        pipeline) or never. Needs the masked CI/CD variables DEVSECOPS_TELEGRAM_TOKEN and DEVSECOPS_TELEGRAM_CHAT_ID.
+      default: schedule
+      options: [schedule, failure, never]
 ---
 # Exit codes of every scan job: 0 clean, 1 blocking findings, 2 findings in report-only mode or
 # changed exception files (shown as a warning), 3 the scanner itself failed.
@@ -55,6 +61,7 @@ spec:
     DEVSECOPS_SKIP: "$[[ inputs.skip ]]"
     DEVSECOPS_FAIL_ON: "$[[ inputs.fail-on-severity ]]"
     DEVSECOPS_MR_PIPELINES: "$[[ inputs.merge-request-pipelines ]]"
+    DEVSECOPS_NOTIFY: "$[[ inputs.notify ]]"
     DEVSECOPS_REPORTS: $CI_PROJECT_DIR/devsecops-reports
   artifacts:
     when: always
@@ -239,7 +246,7 @@ devsecops-deps:
       status=0
       /grype dir:. --only-fixed --fail-on "$DEVSECOPS_FAIL_ON" --output table \
         --output sarif="$DEVSECOPS_REPORTS/grype-source.sarif" --output cyclonedx-json="$DEVSECOPS_REPORTS/gl-sbom-source.cdx.json" \
-        || status=$?
+        --output json="$DEVSECOPS_REPORTS/grype-source.json" || status=$?
       case "$status" in
         0) DEVSECOPS_FOUND=0 ;;
         2) DEVSECOPS_FOUND=1 ;;
@@ -347,7 +354,7 @@ devsecops-image:
         status=0
         /grype "docker-archive:$archive" --only-fixed --fail-on "$DEVSECOPS_FAIL_ON" --output table \
           --output sarif="$DEVSECOPS_REPORTS/grype-image.sarif" --output cyclonedx-json="$DEVSECOPS_REPORTS/gl-sbom-image.cdx.json" \
-          || status=$?
+          --output json="$DEVSECOPS_REPORTS/grype-image.json" || status=$?
         case "$status" in
           0) ;;
           2) DEVSECOPS_FOUND=1 ;;
@@ -360,3 +367,84 @@ devsecops-image:
   artifacts:
     reports:
       cyclonedx: devsecops-reports/gl-sbom-image.cdx.json
+
+# A failed check reaches the team in Telegram, with the vulnerable packages of the Grype reports. The
+# scheduled pipeline finds CVEs published after a release. Without the two variables the job only logs.
+devsecops-notify:
+  stage: $[[ inputs.stage ]]
+  image:
+    name: python:3.14.10-alpine@sha256:5862d971d1f0ae26b258cefa4e893556b1d3aba81bd2ff30888704ad378bab67
+  needs:
+    - job: devsecops-secrets
+      optional: true
+      artifacts: false
+    - job: devsecops-ci
+      optional: true
+      artifacts: false
+    - job: devsecops-sast
+      optional: true
+      artifacts: false
+    - job: devsecops-dockerfiles
+      optional: true
+      artifacts: false
+    - job: devsecops-deps
+      optional: true
+    - job: devsecops-image
+      optional: true
+  allow_failure: true
+  variables:
+    DEVSECOPS_NOTIFY: "$[[ inputs.notify ]]"
+    DEVSECOPS_FAIL_ON: "$[[ inputs.fail-on-severity ]]"
+  rules:
+    - if: $DEVSECOPS_NOTIFY == "failure" && $CI_COMMIT_BRANCH
+      when: on_failure
+    - if: $DEVSECOPS_NOTIFY == "schedule" && $CI_PIPELINE_SOURCE == "schedule"
+      when: on_failure
+  script:
+    - |
+      python3 - <<'EOF'
+      import html, json, os, pathlib, urllib.parse, urllib.request
+
+      token, chat = os.environ.get("DEVSECOPS_TELEGRAM_TOKEN"), os.environ.get("DEVSECOPS_TELEGRAM_CHAT_ID")
+      if not token or not chat:
+          print("DevSecOps: no DEVSECOPS_TELEGRAM_TOKEN or DEVSECOPS_TELEGRAM_CHAT_ID, no message sent")
+          raise SystemExit(0)
+      rank = {"negligible": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+      threshold = rank[os.environ["DEVSECOPS_FAIL_ON"]]
+      env = os.environ
+      lines = [
+          f"🔴 <b>{html.escape(env['CI_PROJECT_PATH'])}</b>: DevSecOps found problems",
+          html.escape(f"{env.get('CI_COMMIT_REF_NAME', '')} · {env['CI_PIPELINE_SOURCE']}"),
+      ]
+      # The same summary as scripts/scan_running.py: packages at the threshold, worst first.
+      for report in sorted(pathlib.Path(env["CI_PROJECT_DIR"], "devsecops-reports").glob("grype-*.json")):
+          packages = {}
+          for match in json.loads(report.read_text()).get("matches") or []:
+              vuln, art = match["vulnerability"], match["artifact"]
+              level = rank.get(vuln.get("severity", "").lower(), 0)
+              if level < threshold:
+                  continue
+              p = packages.setdefault((art["name"], art["version"]), {"ids": set(), "fix": set(), "level": -1})
+              p["ids"].add(vuln["id"])
+              p["fix"].update(vuln.get("fix", {}).get("versions", []))
+              if level > p["level"]:
+                  p["level"], p["severity"] = level, vuln["severity"]
+          worst = sorted(packages.items(), key=lambda item: (-item[1]["level"], item[0]))
+          for (name, version), p in worst[:5]:
+              ids = sorted(p["ids"])
+              more = f" +{len(ids) - 1}" if len(ids) > 1 else ""
+              fix = ", ".join(sorted(p["fix"]))
+              lines.append("• " + html.escape(f"{name} {version} → {fix}: {ids[0]} {p['severity']}{more}"))
+          if len(worst) > 5:
+              lines.append(f"… {len(worst) - 5} more packages")
+      lines.append(f'<a href="{html.escape(env["CI_PIPELINE_URL"])}">Pipeline and reports</a>')
+      body = urllib.parse.urlencode({
+          "chat_id": chat, "text": "\n".join(lines), "parse_mode": "HTML",
+          "link_preview_options": '{"is_disabled":true}',
+      }).encode()
+      # The token is in the URL: an error prints only its type.
+      try:
+          urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", body, timeout=20).close()
+      except OSError as error:
+          raise SystemExit(f"DevSecOps: Telegram message failed: {type(error).__name__}")
+      EOF

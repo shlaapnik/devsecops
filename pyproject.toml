@@ -33,3 +33,6 @@ select = ["ANN", "B", "E", "F", "I", "RUF", "S", "UP", "W"]
 [tool.ruff.lint.per-file-ignores]
 # The runner calls docker and git on purpose and mirrors the world-writable checkout of GitLab runners.
 "scripts/run_gitlab_component.py" = ["S103", "S603", "S607"]
+# It runs docker by design and calls only the Telegram API over HTTPS.
+"scripts/scan_running.py" = ["S310", "S603", "S607"]
+"scripts/test_*.py" = ["S101"]
