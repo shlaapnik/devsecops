@@ -13,7 +13,7 @@ With `--state` a message goes out only when a package and CVE appear that the la
 not have: a third-party image waiting for its fix does not repeat every night.
 
 Exit codes: 0 nothing at the threshold, 1 fixable vulnerabilities at the threshold or above,
-3 the scan or the message failed.
+3 the scan, the message or the script failed.
 """
 
 import argparse
@@ -107,12 +107,22 @@ def only_new(found: Mapping[str, Sequence[Package]], seen: set[str]) -> dict[str
     return {image: packages for image, packages in new.items() if packages}
 
 
-def running_images(project: str | None) -> list[str]:
-    command = ["docker", "ps", "--format", "{{.Image}}"]
-    if project:
-        command[2:2] = ["--filter", f"label=com.docker.compose.project={project}"]
-    output = subprocess.run(command, check=True, capture_output=True, text=True).stdout
-    return sorted(set(output.split()))
+def images_by_name(inspect_output: str) -> dict[str, str]:
+    """`docker inspect` lines of `{{.Config.Image}} {{.Image}}`: each image name without its digest,
+    and the image ID. An image pulled by digest (`name:tag@sha256:…`, as Renovate pins them) has no
+    local tag, so `docker save name:tag` does not find it and the ID does."""
+    pairs = (line.split() for line in inspect_output.splitlines() if line.strip())
+    return {reference.split("@", 1)[0]: image_id for reference, image_id in pairs}
+
+
+def running_images(project: str) -> dict[str, str]:
+    """The images of the running containers of one Compose project: name and image ID."""
+    command = ["docker", "ps", "--quiet", "--filter", f"label=com.docker.compose.project={project}"]
+    containers = subprocess.run(command, check=True, capture_output=True, text=True).stdout.split()
+    if not containers:
+        return {}
+    command = ["docker", "inspect", "--format", "{{.Config.Image}} {{.Image}}", *containers]
+    return images_by_name(subprocess.run(command, check=True, capture_output=True, text=True).stdout)
 
 
 def scan(image: str, config: Path | None, cache: str) -> dict:
@@ -132,7 +142,7 @@ def scan(image: str, config: Path | None, cache: str) -> dict:
             save.stdout.close()
     if save.returncode or result.returncode:
         codes = f"docker save {save.returncode}, grype {result.returncode}"
-        raise ScanFailed(f"{image}: {codes}\n{result.stderr[-500:]}")
+        raise ScanFailed(f"{codes}\n{result.stderr[-500:]}")
     return json.loads(result.stdout)
 
 
@@ -164,20 +174,22 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 def main(argv: Iterable[str]) -> int:
     args = parse_args(list(argv))
-    images = sorted(set(args.image) | set(running_images(args.project) if args.project else []))
+    images = {image: image for image in args.image}
+    if args.project:
+        images |= running_images(args.project)
     if not images:
         print("No images to scan", file=sys.stderr)
         return 3
     found: dict[str, list[Package]] = {}
-    try:
-        for image in images:
+    for name, image in sorted(images.items()):
+        try:
             packages = vulnerable(scan(image, args.config, args.cache), args.fail_on)
-            print(f"{image}: {len(packages)} vulnerable package(s)")
-            if packages:
-                found[image] = packages
-    except (ScanFailed, subprocess.CalledProcessError, json.JSONDecodeError) as error:
-        print(f"Scan failed: {error}", file=sys.stderr)
-        return 3
+        except (ScanFailed, json.JSONDecodeError) as error:
+            print(f"Scan failed: {name}: {error}", file=sys.stderr)
+            return 3
+        print(f"{name}: {len(packages)} vulnerable package(s)")
+        if packages:
+            found[name] = packages
     current = {
         key for image, packages in found.items() for package in packages for key in keys(image, package)
     }
@@ -195,7 +207,9 @@ def main(argv: Iterable[str]) -> int:
             return 1
         try:
             send(token, chat, text)
-        except (OSError, ScanFailed) as error:  # the token is in the URL: never print the request
+        # The token is in the URL, and some errors quote it (http.client.InvalidURL on a stray
+        # character from the env file): only the type of the error is printed.
+        except Exception as error:
             print(f"Telegram message failed: {type(error).__name__}", file=sys.stderr)
             return 3
     if args.state and not args.dry_run:
@@ -204,4 +218,8 @@ def main(argv: Iterable[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Exception as error:  # Python exits with 1 on a crash, and 1 means findings
+        print(f"Failed: {type(error).__name__}: {error}", file=sys.stderr)
+        sys.exit(3)

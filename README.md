@@ -204,7 +204,7 @@ with the same Grype and sends the same message.
 - `--config` passes the project's ignore file, usually `.grype.yaml`.
 - `--state` keeps the findings already sent. A message goes out only for a new package or CVE: a
   third-party image waiting for its fix does not repeat every night.
-- Exit codes: 0 no vulnerabilities, 1 vulnerabilities found, 3 the scan or the message failed.
+- Exit codes: 0 no vulnerabilities, 1 vulnerabilities found, 3 the scan, the message or the script failed.
 
 Run it nightly by cron. Take it from a release, not from `main`:
 

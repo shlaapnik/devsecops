@@ -2,7 +2,7 @@
 
 import unittest
 
-from scan_running import SHOWN, Package, keys, message, only_new, repository, vulnerable
+from scan_running import SHOWN, Package, images_by_name, keys, message, only_new, repository, vulnerable
 
 
 def match(name: str, version: str, cve: str, severity: str, fix: str) -> dict:
@@ -47,6 +47,13 @@ class SummaryTest(unittest.TestCase):
         worse = {"app-backend:new": [Package("libkrb5-3", "1", "High", {"CVE-1", "CVE-2"}, {"2"})]}
         assert list(only_new(worse, sent)) == ["app-backend:new"]
         assert message("app", worse, total=7).endswith("Vulnerable packages in all running images: 7")
+
+    def test_an_image_pulled_by_digest_is_saved_by_its_id(self) -> None:
+        output = "redis:8.12.0-alpine@sha256:5af8 sha256:1111\napp-backend:2ffec5c sha256:2222\n\n"
+        assert images_by_name(output) == {
+            "redis:8.12.0-alpine": "sha256:1111",
+            "app-backend:2ffec5c": "sha256:2222",
+        }
 
 
 if __name__ == "__main__":
