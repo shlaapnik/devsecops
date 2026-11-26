@@ -89,7 +89,7 @@ env:
   GRYPE_IMAGE: anchore/grype:v0.122.0@sha256:013e16ae96bd64108973e3e9fecec63f7ff276358d34c46c25d33e2aac96539f
   HADOLINT_IMAGE: hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
   SEMGREP_IMAGE: semgrep/semgrep:1.186.0@sha256:6e1b04340e60e910fbb4ddbf3c857ab0918f064417ad5ac530014ccb3cf8c8f1
-  ZIZMOR_IMAGE: ghcr.io/zizmorcore/zizmor:1.33.0@sha256:1b9bebe30894567d922aa8467ec3b6d39d8f4f65b7736addbda6e83d1b0c477f
+  ZIZMOR_IMAGE: ghcr.io/zizmorcore/zizmor:1.33.1@sha256:ecd3ffe6158de1322e05a044ed43749bee12b1dccb7e1a7859bc6ac4b2a1c516
   SCAN_PATH: ${{ inputs.path }}
   # The vulnerable packages of a Grype report at the threshold or above, worst first: the lines of the
   # Telegram message.
