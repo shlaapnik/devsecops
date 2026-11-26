@@ -30,7 +30,7 @@ from pathlib import Path
 
 # The -debug variant has a shell, which writes stdin to a file for Grype.
 GRYPE_IMAGE = (
-    "anchore/grype:v0.122.0-debug@sha256:050af5654b74bf998e89cb3111c471cee8b71da26af7aafe3458180b4772a843"
+    "anchore/grype:v0.122.1-debug@sha256:123579d16feeadc9f1a6b28d8bc27edeead34a1ff37d6784070f61af669391ef"
 )
 RANK = {"negligible": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 SHOWN = 5  # packages per image in the message; Telegram cuts a message at 4096 characters
