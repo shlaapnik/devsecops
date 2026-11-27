@@ -209,7 +209,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: ${{ runner.temp }}/devsecops/betterleaks.sarif
           category: ${{ inputs.report-name }}-secrets
@@ -336,7 +336,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: ${{ runner.temp }}/devsecops/zizmor.sarif
           category: ${{ inputs.report-name }}-zizmor
@@ -415,7 +415,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: ${{ runner.temp }}/devsecops/semgrep.sarif
           category: ${{ inputs.report-name }}-semgrep
@@ -491,7 +491,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: ${{ runner.temp }}/devsecops/grype-source.sarif
           category: ${{ inputs.report-name }}-deps
@@ -569,7 +569,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: ${{ runner.temp }}/devsecops/hadolint.sarif
           category: ${{ inputs.report-name }}-hadolint
@@ -667,7 +667,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: ${{ !cancelled() && inputs.upload-sarif && github.event.repository.private != true && steps.scan.outputs.report == 'true' }}
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: ${{ runner.temp }}/devsecops/grype-image.sarif
           category: ${{ inputs.report-name }}-image
